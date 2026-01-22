@@ -4,94 +4,179 @@ from datetime import datetime, timedelta
 import os
 import json
 
-def get_upcoming_events():
-    """Scrape events from Pakistan Expo website"""
-    url = "https://pakexcel.com/events-upcoming"
+def scrape_all_pages(base_url="https://pakexcel.com/events-upcoming"):
+    """Scrape all pages of events"""
+    all_events = []
+    page = 0
 
+    while True:
+        url = f"{base_url}?page={page}" if page > 0 else base_url
+        print(f"Scraping page {page + 1}: {url}")
+
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+
+            # Find all event items
+            event_items = soup.find_all('div', class_='event-item')
+
+            if not event_items:
+                print(f"No events found on page {page + 1}, stopping.")
+                break
+
+            for item in event_items:
+                event = extract_event_data(item)
+                if event:
+                    all_events.append(event)
+
+            # Check if there's a next page
+            pagination = soup.find('nav', class_='pagination') or soup.find('ul', class_='pagination')
+            if pagination:
+                next_link = pagination.find('a', string=lambda s: 'Next' in s if s else False)
+                if not next_link:
+                    break  # No more pages
+            else:
+                break  # No pagination means single page
+
+            page += 1
+
+        except Exception as e:
+            print(f"Error scraping page {page + 1}: {e}")
+            break
+
+    return all_events
+
+
+def extract_event_data(event_item):
+    """Extract data from a single event item"""
     try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
+        # Event title (required)
+        title_elem = event_item.find('h3', class_='event-title')
+        if not title_elem:
+            return None
 
-        # Calculate date range (next 3 days)
-        today = datetime.now()
-        three_days_later = today + timedelta(days=3)
+        title = title_elem.get_text(strip=True)
 
-        events = []
+        # Dates with datetime attributes (most reliable)
+        date_elements = event_item.find_all('time', attrs={'datetime': True})
 
-        # Find all event containers
-        event_sections = soup.find_all('div', class_='views-row')
+        if len(date_elements) >= 2:
+            start_date_text = date_elements[0].get_text(strip=True)
+            end_date_text = date_elements[1].get_text(strip=True)
+            start_datetime = date_elements[0].get('datetime')
+            end_datetime = date_elements[1].get('datetime')
+        elif len(date_elements) == 1:
+            # Single date event
+            start_date_text = date_elements[0].get_text(strip=True)
+            end_date_text = start_date_text
+            start_datetime = date_elements[0].get('datetime')
+            end_datetime = start_datetime
+        else:
+            # Fallback: try to find dates without datetime attribute
+            start_date_text = "Date not found"
+            end_date_text = "Date not found"
+            start_datetime = None
+            end_datetime = None
 
-        if not event_sections:
-            # Fallback: try to find event titles and dates
-            titles = soup.find_all(['h2', 'h3'])
-            for title in titles:
-                event_name = title.get_text(strip=True)
-                if event_name and len(event_name) > 5:
-                    # Try to find dates near this title
-                    parent = title.find_parent()
-                    dates = parent.find_all('time') if parent else []
+        # Details URL (required)
+        details_link = event_item.find('a', href=lambda h: h and '/node/' in h)
+        details_url = None
+        if details_link:
+            href = details_link.get('href', '')
+            if href.startswith('/'):
+                details_url = f"https://pakexcel.com{href}"
+            else:
+                details_url = href
 
-                    if dates and len(dates) >= 2:
-                        start_date = dates[0].get_text(strip=True)
-                        end_date = dates[1].get_text(strip=True) if len(dates) > 1 else start_date
+        # Organizer URL (optional)
+        organizer_link = event_item.find('a', target='_blank')
+        organizer_url = organizer_link.get('href') if organizer_link else None
 
-                        # Try to find organizer link
-                        organizer_link = parent.find('a', href=True, string=lambda s: 'Organizer' in s if s else False)
-                        organizer = organizer_link['href'] if organizer_link else None
+        # Event image (optional)
+        image_elem = event_item.find('img')
+        image_url = None
+        if image_elem:
+            src = image_elem.get('src', '')
+            if src.startswith('/'):
+                image_url = f"https://pakexcel.com{src}"
+            else:
+                image_url = src
 
-                        # Parse date to check if within 3 days
-                        try:
-                            event_start = datetime.strptime(start_date, "%b %d, %Y")
-                            if today <= event_start <= three_days_later:
-                                events.append({
-                                    'name': event_name,
-                                    'start_date': start_date,
-                                    'end_date': end_date,
-                                    'organizer': organizer
-                                })
-                        except:
-                            # If date parsing fails, include all events found
-                            events.append({
-                                'name': event_name,
-                                'start_date': start_date,
-                                'end_date': end_date,
-                                'organizer': organizer
-                            })
-
-        return events
+        return {
+            'title': title,
+            'start_date': start_date_text,
+            'end_date': end_date_text,
+            'start_datetime_iso': start_datetime,
+            'end_datetime_iso': end_datetime,
+            'details_url': details_url,
+            'organizer_url': organizer_url,
+            'image_url': image_url
+        }
 
     except Exception as e:
-        print(f"Error scraping events: {e}")
-        return []
+        print(f"Error extracting event data: {e}")
+        return None
 
-def send_to_slack(events):
-    """Send events to Slack webhook"""
-    webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
 
+def filter_events_by_date_range(events, days_ahead=3):
+    """Filter events happening within the next X days"""
+    today = datetime.utcnow()
+    target_date = today + timedelta(days=days_ahead)
+
+    filtered_events = []
+
+    for event in events:
+        if not event.get('start_datetime_iso'):
+            # If no ISO datetime, include by default (or skip)
+            continue
+
+        try:
+            # Parse ISO datetime
+            event_start = datetime.fromisoformat(event['start_datetime_iso'].replace('Z', '+00:00'))
+
+            # Check if event starts within the date range
+            if today <= event_start <= target_date:
+                filtered_events.append(event)
+        except Exception as e:
+            print(f"Error parsing date for '{event['title']}': {e}")
+
+    return filtered_events
+
+
+def send_to_slack(events, webhook_url):
+    """Send formatted event list to Slack"""
     if not webhook_url:
-        print("ERROR: SLACK_WEBHOOK_URL not set in environment variables")
+        print("ERROR: Slack webhook URL not provided")
         return False
 
     # Build message
     if not events:
-        message = "📅 *Upcoming Events - Next 3 Days*\n\nNo events found in the next 3 days."
+        message = "📅 *Upcoming Events - Next 3 Days*\n\n_No events found in the next 3 days._"
     else:
         message = "📅 *Upcoming Events - Next 3 Days*\n\n"
 
         for i, event in enumerate(events, 1):
-            message += f"*{i}. {event['name']}*\n"
-            message += f"🗓️ {event['start_date']}"
-            if event['end_date'] != event['start_date']:
-                message += f" - {event['end_date']}"
+            message += f"*{i}. {event['title']}*\n"
+
+            # Date formatting
+            if event['start_date'] == event['end_date']:
+                message += f"🗓️ {event['start_date']}\n"
+            else:
+                message += f"🗓️ {event['start_date']} - {event['end_date']}\n"
+
+            # Organizer link
+            if event.get('organizer_url'):
+                message += f"🔗 {event['organizer_url']}\n"
+
+            # Details link
+            if event.get('details_url'):
+                message += f"📄 <{event['details_url']}|View Details>\n"
+
             message += "\n"
 
-            if event.get('organizer'):
-                message += f"🔗 {event['organizer']}\n"
-
-            message += "\n"
-
-    message += f"_Last checked: {datetime.now().strftime('%b %d, %Y at %I:%M %p')}_"
+    # Add timestamp
+    message += f"_Last checked: {datetime.utcnow().strftime('%b %d, %Y at %H:%M UTC')}_"
 
     # Send to Slack
     try:
@@ -100,10 +185,9 @@ def send_to_slack(events):
 
         if response.status_code == 200:
             print("✅ Successfully sent to Slack!")
-            print(f"Message: {message}")
             return True
         else:
-            print(f"❌ Failed to send to Slack. Status: {response.status_code}")
+            print(f"❌ Slack API returned status {response.status_code}")
             print(f"Response: {response.text}")
             return False
 
@@ -111,19 +195,49 @@ def send_to_slack(events):
         print(f"❌ Error sending to Slack: {e}")
         return False
 
-if __name__ == "__main__":
-    print("🔍 Scraping upcoming events...")
-    events = get_upcoming_events()
 
-    print(f"📋 Found {len(events)} event(s) in the next 3 days")
-    for event in events:
-        print(f"  - {event['name']}")
+def main():
+    """Main execution function"""
+    print("=" * 60)
+    print("PAKISTAN EXPO EVENTS SCRAPER")
+    print("=" * 60)
 
-    print("\n📤 Sending to Slack...")
-    success = send_to_slack(events)
+    # Step 1: Scrape all events from all pages
+    print("\n🔍 Step 1: Scraping all events...")
+    all_events = scrape_all_pages()
+    print(f"✅ Found {len(all_events)} total events")
+
+    # Step 2: Filter events happening in next 3 days
+    print("\n📅 Step 2: Filtering events for next 3 days...")
+    upcoming_events = filter_events_by_date_range(all_events, days_ahead=3)
+    print(f"✅ Found {len(upcoming_events)} events in the next 3 days")
+
+    # Print events for debugging
+    if upcoming_events:
+        print("\nUpcoming Events:")
+        for event in upcoming_events:
+            print(f"  - {event['title']} ({event['start_date']})")
+
+    # Step 3: Send to Slack
+    # Check both WEBHOOK_URL and SLACK_WEBHOOK_URL for flexibility
+    webhook_url = os.environ.get('WEBHOOK_URL') or os.environ.get('SLACK_WEBHOOK_URL')
+
+    if not webhook_url:
+        print("\n⚠️ WARNING: WEBHOOK_URL or SLACK_WEBHOOK_URL environment variable not set")
+        print("Set it with: export WEBHOOK_URL='your_webhook_url'")
+        return False
+
+    print("\n📤 Step 3: Sending to Slack...")
+    success = send_to_slack(upcoming_events, webhook_url)
 
     if success:
-        print("✅ Done!")
+        print("\n✅ DONE! Check your Slack channel.")
+        return True
     else:
-        print("❌ Failed to send notification")
-        exit(1)
+        print("\n❌ FAILED to send to Slack")
+        return False
+
+
+if __name__ == "__main__":
+    success = main()
+    exit(0 if success else 1)
