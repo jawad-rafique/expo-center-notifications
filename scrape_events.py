@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import os
 import json
+import time
 
 def scrape_all_pages(base_url="https://pakexcel.com/events-upcoming"):
     """Scrape all pages of events"""
@@ -11,38 +12,77 @@ def scrape_all_pages(base_url="https://pakexcel.com/events-upcoming"):
 
     while True:
         url = f"{base_url}?page={page}" if page > 0 else base_url
-        print(f"Scraping page {page + 1}: {url}")
+        print(f"\n🌐 Scraping page {page + 1}: {url}")
 
         try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
+            # Add headers to mimic a real browser
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+
+            # Retry logic for 503 errors
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(url, headers=headers, timeout=10)
+                    response.raise_for_status()
+                    break  # Success, exit retry loop
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 503 and attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2  # 2, 4, 6 seconds
+                        print(f"   ⏳ 503 error, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                    else:
+                        raise  # Re-raise if not 503 or last attempt
+
             soup = BeautifulSoup(response.content, 'html.parser')
 
             # Find all event items
             event_items = soup.find_all('div', class_='event-item')
 
             if not event_items:
-                print(f"No events found on page {page + 1}, stopping.")
-                break
+                print(f"   ⚠️  No events found with selector 'div.event-item' on page {page + 1}")
+                # Try alternative selectors for debugging
+                alternatives = soup.find_all('div', class_='event-pitem')
+                if alternatives:
+                    print(f"   💡 Found {len(alternatives)} elements with class 'event-pitem' instead")
+                    event_items = alternatives
+                else:
+                    print(f"   Stopping pagination.")
+                    break
+
+            print(f"   ✅ Found {len(event_items)} event containers on page {page + 1}")
 
             for item in event_items:
                 event = extract_event_data(item)
                 if event:
                     all_events.append(event)
+                    print(f"      ✓ Extracted: {event['title'][:50]}...")
+                else:
+                    print(f"      ✗ Failed to extract event data from container")
 
             # Check if there's a next page
             pagination = soup.find('nav', class_='pagination') or soup.find('ul', class_='pagination')
             if pagination:
                 next_link = pagination.find('a', string=lambda s: 'Next' in s if s else False)
                 if not next_link:
+                    print(f"   No 'Next' link found - last page reached")
                     break  # No more pages
             else:
+                print(f"   No pagination found - single page or last page")
                 break  # No pagination means single page
 
             page += 1
 
         except Exception as e:
-            print(f"Error scraping page {page + 1}: {e}")
+            print(f"   ❌ Error scraping page {page + 1}: {e}")
+            import traceback
+            traceback.print_exc()
             break
 
     return all_events
@@ -125,10 +165,20 @@ def filter_events_by_date_range(events, days_ahead=3):
     target_date = today + timedelta(days=days_ahead)
 
     filtered_events = []
+    skipped_no_date = []
+    skipped_out_of_range = []
+
+    print(f"\n📊 Date Filter Debug:")
+    print(f"   Today (UTC): {today.strftime('%b %d, %Y %H:%M')}")
+    print(f"   Target date: {target_date.strftime('%b %d, %Y %H:%M')}")
+    print(f"   Looking for events between these dates...\n")
 
     for event in events:
         if not event.get('start_datetime_iso'):
-            # If no ISO datetime, include by default (or skip)
+            # Include events without datetime with a warning
+            print(f"⚠️  '{event['title']}' - No datetime attribute found, including anyway")
+            filtered_events.append(event)
+            skipped_no_date.append(event['title'])
             continue
 
         try:
@@ -137,9 +187,21 @@ def filter_events_by_date_range(events, days_ahead=3):
 
             # Check if event starts within the date range
             if today <= event_start <= target_date:
+                print(f"✅ '{event['title']}' - {event_start.strftime('%b %d, %Y')} - MATCH")
                 filtered_events.append(event)
+            else:
+                print(f"❌ '{event['title']}' - {event_start.strftime('%b %d, %Y')} - OUT OF RANGE")
+                skipped_out_of_range.append(f"{event['title']} ({event_start.strftime('%b %d, %Y')})")
         except Exception as e:
-            print(f"Error parsing date for '{event['title']}': {e}")
+            print(f"⚠️  Error parsing date for '{event['title']}': {e}")
+            # Include events with parsing errors
+            filtered_events.append(event)
+
+    # Summary
+    print(f"\n📈 Filter Summary:")
+    print(f"   ✅ Matched: {len(filtered_events)}")
+    print(f"   ⚠️  No datetime: {len(skipped_no_date)}")
+    print(f"   ❌ Out of range: {len(skipped_out_of_range)}")
 
     return filtered_events
 
@@ -205,18 +267,37 @@ def main():
     # Step 1: Scrape all events from all pages
     print("\n🔍 Step 1: Scraping all events...")
     all_events = scrape_all_pages()
-    print(f"✅ Found {len(all_events)} total events")
+    print(f"\n✅ Found {len(all_events)} total events across all pages")
+
+    # Show all events found (for debugging)
+    if all_events:
+        print("\n📋 All Events Found:")
+        for i, event in enumerate(all_events, 1):
+            date_info = f"{event['start_date']} - {event['end_date']}" if event['start_date'] != event['end_date'] else event['start_date']
+            has_datetime = "✓" if event.get('start_datetime_iso') else "✗"
+            print(f"   {i}. {event['title']}")
+            print(f"      Dates: {date_info}")
+            print(f"      Has datetime attribute: {has_datetime}")
+            if event.get('start_datetime_iso'):
+                print(f"      ISO datetime: {event['start_datetime_iso']}")
+    else:
+        print("\n⚠️ WARNING: No events found! This might indicate:")
+        print("   - CSS selector '.event-item' doesn't match the HTML")
+        print("   - Website structure has changed")
+        print("   - Network/connection issue")
 
     # Step 2: Filter events happening in next 3 days
     print("\n📅 Step 2: Filtering events for next 3 days...")
     upcoming_events = filter_events_by_date_range(all_events, days_ahead=3)
-    print(f"✅ Found {len(upcoming_events)} events in the next 3 days")
+    print(f"\n✅ Found {len(upcoming_events)} events in the next 3 days")
 
-    # Print events for debugging
+    # Print filtered events
     if upcoming_events:
-        print("\nUpcoming Events:")
+        print("\n🎯 Events to be sent to Slack:")
         for event in upcoming_events:
             print(f"  - {event['title']} ({event['start_date']})")
+    else:
+        print("\n⚠️ No events match the filter criteria")
 
     # Step 3: Send to Slack
     # Check both WEBHOOK_URL and SLACK_WEBHOOK_URL for flexibility
