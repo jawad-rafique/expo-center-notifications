@@ -1,0 +1,29 @@
+name: Daily Events Notification
+
+on:
+  schedule:
+    # Runs every day at 8:00 AM Pakistan Time (3:00 AM UTC)
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Allows manual testing
+
+jobs:
+  send-events:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4
+
+    - name: Run events scraper
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: python scrape_events.py
