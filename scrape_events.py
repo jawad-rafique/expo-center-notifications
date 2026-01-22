@@ -169,14 +169,18 @@ def extract_event_data(event_item):
 
 def filter_events_by_date_range(events, days_ahead=3):
     """Filter events happening within the next X days"""
-    today = datetime.utcnow()
-    target_date = today + timedelta(days=days_ahead)
+    # Get the start of today (midnight UTC) to include ALL events happening today
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    # Get the start of the day AFTER our target period (to include all of the last day)
+    target_date = today + timedelta(days=days_ahead + 1)
 
     filtered_events = []
     skipped_no_date = []
     skipped_out_of_range = []
 
-    print(f"   📅 Date range: {today.strftime('%b %d')} to {target_date.strftime('%b %d, %Y')}")
+    # Show the actual date range (inclusive end date for display)
+    end_date_display = target_date - timedelta(days=1)
+    print(f"   📅 Date range: {today.strftime('%b %d')} to {end_date_display.strftime('%b %d, %Y')} (inclusive)")
 
     for event in events:
         if not event.get('start_datetime_iso'):
@@ -188,8 +192,8 @@ def filter_events_by_date_range(events, days_ahead=3):
             # Parse ISO datetime
             event_start = datetime.fromisoformat(event['start_datetime_iso'].replace('Z', '+00:00'))
 
-            # Check if event starts within the date range
-            if today <= event_start <= target_date:
+            # Check if event starts within the date range (from start of today to start of day after target)
+            if today <= event_start < target_date:
                 filtered_events.append(event)
             else:
                 skipped_out_of_range.append(f"{event['title']} ({event_start.strftime('%b %d, %Y')})")
