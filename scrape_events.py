@@ -180,8 +180,7 @@ def filter_events_by_date_range(events, days_ahead=3):
 
     for event in events:
         if not event.get('start_datetime_iso'):
-            # Include events without datetime with a warning
-            filtered_events.append(event)
+            # Skip events without datetime - we can't filter them
             skipped_no_date.append(event['title'])
             continue
 
@@ -195,8 +194,9 @@ def filter_events_by_date_range(events, days_ahead=3):
             else:
                 skipped_out_of_range.append(f"{event['title']} ({event_start.strftime('%b %d, %Y')})")
         except Exception as e:
-            # Include events with parsing errors
-            filtered_events.append(event)
+            # Skip events with parsing errors
+            print(f"   ⚠️ Skipping '{event['title']}' - date parsing error: {e}")
+            skipped_no_date.append(event['title'])
 
     # Concise summary
     print(f"   ✅ Matched: {len(filtered_events)} | ⚠️ No date: {len(skipped_no_date)} | ❌ Out of range: {len(skipped_out_of_range)}")
