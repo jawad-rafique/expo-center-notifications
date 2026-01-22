@@ -65,13 +65,14 @@ def scrape_all_pages(base_url="https://pakexcel.com/events-upcoming"):
 
             print(f"   ✅ Found {len(event_items)} event containers on page {page + 1}")
 
+            extracted_count = 0
             for item in event_items:
                 event = extract_event_data(item)
                 if event:
                     all_events.append(event)
-                    print(f"      ✓ Extracted: {event['title'][:50]}...")
-                else:
-                    print(f"      ✗ Failed to extract event data from container")
+                    extracted_count += 1
+
+            print(f"   ✓ Successfully extracted {extracted_count}/{len(event_items)} events")
 
             # Check if there's a next page
             pagination = soup.find('nav', class_='pagination') or soup.find('ul', class_='pagination')
@@ -175,15 +176,11 @@ def filter_events_by_date_range(events, days_ahead=3):
     skipped_no_date = []
     skipped_out_of_range = []
 
-    print(f"\n📊 Date Filter Debug:")
-    print(f"   Today (UTC): {today.strftime('%b %d, %Y %H:%M')}")
-    print(f"   Target date: {target_date.strftime('%b %d, %Y %H:%M')}")
-    print(f"   Looking for events between these dates...\n")
+    print(f"   📅 Date range: {today.strftime('%b %d')} to {target_date.strftime('%b %d, %Y')}")
 
     for event in events:
         if not event.get('start_datetime_iso'):
             # Include events without datetime with a warning
-            print(f"⚠️  '{event['title']}' - No datetime attribute found, including anyway")
             filtered_events.append(event)
             skipped_no_date.append(event['title'])
             continue
@@ -194,21 +191,15 @@ def filter_events_by_date_range(events, days_ahead=3):
 
             # Check if event starts within the date range
             if today <= event_start <= target_date:
-                print(f"✅ '{event['title']}' - {event_start.strftime('%b %d, %Y')} - MATCH")
                 filtered_events.append(event)
             else:
-                print(f"❌ '{event['title']}' - {event_start.strftime('%b %d, %Y')} - OUT OF RANGE")
                 skipped_out_of_range.append(f"{event['title']} ({event_start.strftime('%b %d, %Y')})")
         except Exception as e:
-            print(f"⚠️  Error parsing date for '{event['title']}': {e}")
             # Include events with parsing errors
             filtered_events.append(event)
 
-    # Summary
-    print(f"\n📈 Filter Summary:")
-    print(f"   ✅ Matched: {len(filtered_events)}")
-    print(f"   ⚠️  No datetime: {len(skipped_no_date)}")
-    print(f"   ❌ Out of range: {len(skipped_out_of_range)}")
+    # Concise summary
+    print(f"   ✅ Matched: {len(filtered_events)} | ⚠️ No date: {len(skipped_no_date)} | ❌ Out of range: {len(skipped_out_of_range)}")
 
     return filtered_events
 
@@ -290,18 +281,7 @@ def main():
     all_events = scrape_all_pages()
     print(f"\n✅ Found {len(all_events)} total events across all pages")
 
-    # Show all events found (for debugging)
-    if all_events:
-        print("\n📋 All Events Found:")
-        for i, event in enumerate(all_events, 1):
-            date_info = f"{event['start_date']} - {event['end_date']}" if event['start_date'] != event['end_date'] else event['start_date']
-            has_datetime = "✓" if event.get('start_datetime_iso') else "✗"
-            print(f"   {i}. {event['title']}")
-            print(f"      Dates: {date_info}")
-            print(f"      Has datetime attribute: {has_datetime}")
-            if event.get('start_datetime_iso'):
-                print(f"      ISO datetime: {event['start_datetime_iso']}")
-    else:
+    if not all_events:
         print("\n⚠️ WARNING: No events found! This might indicate:")
         print("   - CSS selector '.event-item' doesn't match the HTML")
         print("   - Website structure has changed")
@@ -312,11 +292,19 @@ def main():
     upcoming_events = filter_events_by_date_range(all_events, days_ahead=3)
     print(f"\n✅ Found {len(upcoming_events)} events in the next 3 days")
 
-    # Print filtered events
+    # Print ONLY the filtered events that will be sent
     if upcoming_events:
-        print("\n🎯 Events to be sent to Slack:")
-        for event in upcoming_events:
-            print(f"  - {event['title']} ({event['start_date']})")
+        print("\n" + "="*60)
+        print("🎯 EVENTS TO BE SENT TO SLACK:")
+        print("="*60)
+        for i, event in enumerate(upcoming_events, 1):
+            print(f"\n{i}. {event['title']}")
+            print(f"   Dates: {event['start_date']} ➜ {event['end_date']}")
+            if event.get('organizer_url'):
+                print(f"   Organizer: {event['organizer_url']}")
+            if event.get('details_url'):
+                print(f"   Details: {event['details_url']}")
+        print("\n" + "="*60)
     else:
         print("\n⚠️ No events match the filter criteria")
 
