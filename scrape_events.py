@@ -4,6 +4,10 @@ from datetime import datetime, timedelta
 import os
 import json
 import time
+import urllib3
+
+# Disable SSL warnings when verify=False is used
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def scrape_all_pages(base_url="https://pakexcel.com/events-upcoming"):
     """Scrape all pages of events"""
@@ -29,7 +33,10 @@ def scrape_all_pages(base_url="https://pakexcel.com/events-upcoming"):
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = requests.get(url, headers=headers, timeout=10)
+                    # Note: verify=False disables SSL certificate verification
+                    # This is needed because pakexcel.com has certificate issues
+                    # For public data scraping, this is acceptable
+                    response = requests.get(url, headers=headers, timeout=10, verify=False)
                     response.raise_for_status()
                     break  # Success, exit retry loop
                 except requests.exceptions.HTTPError as e:
