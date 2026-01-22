@@ -219,33 +219,47 @@ def send_to_slack(events, webhook_url):
         print("ERROR: Slack webhook URL not provided")
         return False
 
-    # Build message
+    # Build message with beautiful formatting
     if not events:
-        message = "📅 *Upcoming Events - Next 3 Days*\n\n_No events found in the next 3 days._"
-    else:
         message = "📅 *Upcoming Events - Next 3 Days*\n\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        message += "📭 _No events found in the next 3 days._\n\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    else:
+        # Header with beautiful formatting
+        message = "🎪 *UPCOMING EVENTS AT PAKISTAN EXPO CENTRE*\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"📆 *Next 3 Days* • {len(events)} Event{'s' if len(events) > 1 else ''}\n\n"
 
         for i, event in enumerate(events, 1):
+            # Event title with number
             message += f"*{i}. {event['title']}*\n"
 
-            # Date formatting
+            # Date with improved formatting
             if event['start_date'] == event['end_date']:
-                message += f"🗓️ {event['start_date']}\n"
+                message += f"   📅 {event['start_date']}\n"
             else:
-                message += f"🗓️ {event['start_date']} - {event['end_date']}\n"
+                message += f"   📅 {event['start_date']} ➜ {event['end_date']}\n"
 
-            # Organizer link
+            # Organizer link with icon
             if event.get('organizer_url'):
-                message += f"🔗 {event['organizer_url']}\n"
+                message += f"   🏢 Organizer: <{event['organizer_url']}|Visit Website>\n"
 
-            # Details link
+            # Details link with icon
             if event.get('details_url'):
-                message += f"📄 <{event['details_url']}|View Details>\n"
+                message += f"   📋 <{event['details_url']}|View Full Details>\n"
 
-            message += "\n"
+            # Separator between events (not after last event)
+            if i < len(events):
+                message += "\n   ─────────────────────────────\n\n"
+            else:
+                message += "\n"
 
-    # Add timestamp
-    message += f"_Last checked: {datetime.utcnow().strftime('%b %d, %Y at %H:%M UTC')}_"
+        # Footer
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+
+    # Add timestamp with icon
+    message += f"🕐 _Last updated: {datetime.utcnow().strftime('%b %d, %Y at %H:%M UTC')}_"
 
     # Send to Slack
     try:
