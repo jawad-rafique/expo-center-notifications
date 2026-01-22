@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import os
 import json
+import time
 
 def scrape_all_pages(base_url="https://pakexcel.com/events-upcoming"):
     """Scrape all pages of events"""
@@ -14,8 +15,31 @@ def scrape_all_pages(base_url="https://pakexcel.com/events-upcoming"):
         print(f"\n🌐 Scraping page {page + 1}: {url}")
 
         try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
+            # Add headers to mimic a real browser
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+
+            # Retry logic for 503 errors
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(url, headers=headers, timeout=10)
+                    response.raise_for_status()
+                    break  # Success, exit retry loop
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 503 and attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2  # 2, 4, 6 seconds
+                        print(f"   ⏳ 503 error, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                    else:
+                        raise  # Re-raise if not 503 or last attempt
+
             soup = BeautifulSoup(response.content, 'html.parser')
 
             # Find all event items
